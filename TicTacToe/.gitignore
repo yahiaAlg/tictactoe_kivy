@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Local configuration
+config.yml
+
+# System files
+.DS_Store
