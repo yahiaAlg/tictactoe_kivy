@@ -469,3 +469,345 @@ This documentation provides:
 5. Feature implementations
 6. Performance optimizations
 7. Mobile-specific considerations
+
+---
+
+I'll show you how to modify the project to work on Android using Buildozer, which is the recommended tool for packaging Kivy applications for Android. Here's the complete setup:
+
+1. First, let's create a `buildozer.spec` file for Android packaging:
+
+```python
+# buildozer.spec
+[app]
+title = TicTacToe
+package.name = tictactoe
+package.domain = org.example
+
+version = 1.0
+
+requirements = python3,kivy>=2.0.0,pyyaml>=5.4.1
+
+android.permissions = WRITE_EXTERNAL_STORAGE
+
+# Source code where the main.py lives
+source.dir = .
+source.include_exts = py,png,jpg,kv,atlas,yml
+
+# Android specific
+android.minapi = 21
+android.api = 30
+android.ndk = 23b
+android.sdk = 30
+android.gradle_dependencies = org.xerial:sqlite-jdbc:3.34.0
+android.arch = arm64-v8a
+
+# iOS specific
+ios.kivy_ios_url = https://github.com/kivy/kivy-ios
+ios.kivy_ios_branch = master
+ios.ios_deploy_url = https://github.com/phonegap/ios-deploy
+ios.ios_deploy_branch = 1.7.0
+
+# (list) Permissions
+android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE
+
+# (bool) Indicate if the application should be fullscreen or not
+fullscreen = 0
+
+# (string) Presplash background color (for android toolchain)
+android.presplash_color = #FFFFFF
+
+# (string) Icon for the application
+android.icon.filename = %(source.dir)s/icon.png
+
+# (str) Android logcat filters to use
+android.logcat_filters = *:S python:D
+
+# (bool) Copy library instead of making a libpymodules.so
+android.copy_libs = 1
+
+[buildozer]
+log_level = 2
+warn_on_root = 1
+```
+
+2. Let's modify our main.py to handle Android-specific requirements:
+
+```python
+# main.py
+import os
+from kivy.utils import platform
+from kivy.app import App
+from views.game_view import GameView
+from controllers.game_controller import GameController
+from utils.config_manager import ConfigManager
+from utils.logger import get_logger
+
+class TicTacToeApp(App):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.logger = get_logger()
+        self.setup_android_paths()
+        self.config_manager = ConfigManager()
+        self.controller = GameController(self.config_manager)
+        self.game_view = None
+
+    def setup_android_paths(self):
+        """Setup Android-specific paths for storage."""
+        if platform == 'android':
+            from android.storage import primary_external_storage_path
+            from android.permissions import request_permissions, Permission
+
+            # Request necessary permissions
+            request_permissions([
+                Permission.WRITE_EXTERNAL_STORAGE,
+                Permission.READ_EXTERNAL_STORAGE
+            ])
+
+            # Create application directory in external storage
+            self.app_dir = os.path.join(
+                primary_external_storage_path(),
+                'TicTacToe'
+            )
+            os.makedirs(self.app_dir, exist_ok=True)
+
+            # Set up paths for logs and config
+            os.environ['TICTACTOE_CONFIG_PATH'] = os.path.join(
+                self.app_dir,
+                'config.yml'
+            )
+            os.environ['TICTACTOE_LOGS_PATH'] = os.path.join(
+                self.app_dir,
+                'logs'
+            )
+        else:
+            self.app_dir = os.path.dirname(os.path.abspath(__file__))
+
+    def build(self):
+        """Build and return the root widget."""
+        self.game_view = GameView(self.controller)
+        return self.game_view
+
+    def on_pause(self):
+        """Handle application pause on Android."""
+        return True
+
+    def on_resume(self):
+        """Handle application resume on Android."""
+        pass
+
+if __name__ == '__main__':
+    TicTacToeApp().run()
+```
+
+3. Modify the ConfigManager to handle Android storage:
+
+```python
+# utils/config_manager.py
+import os
+import yaml
+from typing import Dict, Any
+from pathlib import Path
+
+class ConfigManager:
+    """Manage application configuration settings."""
+
+    DEFAULT_CONFIG = {
+        'display': {
+            'window_width': 800,
+            'window_height': 600,
+            'fps': 60,
+            'animations_enabled': True
+        },
+        'game': {
+            'default_difficulty': 'medium',
+            'sound_enabled': True,
+            'save_games': True,
+            'max_undo_steps': 10
+        },
+        'ai': {
+            'max_response_time': 1.0,
+            'easy_depth': 1,
+            'medium_depth': 3,
+            'hard_depth': 9
+        },
+        'theme': {
+            'primary_color': '#2C3E50',
+            'secondary_color': '#E74C3C',
+            'accent_color': '#3498DB',
+            'background_color': '#ECF0F1',
+            'grid_line_width': 2
+        }
+    }
+
+    def __init__(self):
+        self.config_path = os.getenv(
+            'TICTACTOE_CONFIG_PATH',
+            str(Path('config.yml'))
+        )
+        self.config = self.load_config()
+
+    # ... rest of the ConfigManager implementation remains the same ...
+```
+
+4. Modify the Logger to handle Android storage:
+
+```python
+# utils/logger.py
+import os
+import logging
+from pathlib import Path
+from typing import Optional
+import sys
+from kivy.utils import platform
+
+class GameLogger:
+    """Custom logger for the TicTacToe game."""
+
+    _instance: Optional['GameLogger'] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize_logger()
+        return cls._instance
+
+    def _initialize_logger(self) -> None:
+        """Initialize logging configuration."""
+        self.logger = logging.getLogger('TicTacToe')
+        self.logger.setLevel(logging.DEBUG)
+
+        # Get logs directory path
+        logs_dir = os.getenv(
+            'TICTACTOE_LOGS_PATH',
+            str(Path('logs'))
+        )
+        Path(logs_dir).mkdir(exist_ok=True)
+
+        # File handler for debug logs
+        log_file = os.path.join(logs_dir, 'game.log')
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(file_formatter)
+
+        # Console handler for info logs
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_formatter = logging.Formatter(
+            '%(levelname)s: %(message)s'
+        )
+        console_handler.setFormatter(console_formatter)
+
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+
+    # ... rest of the GameLogger implementation remains the same ...
+```
+
+To build and deploy to Android:
+
+1. Install Buildozer:
+
+```bash
+pip install buildozer
+```
+
+2. Initialize Buildozer (creates buildozer.spec):
+
+```bash
+buildozer init
+```
+
+3. Build the Android APK:
+
+```bash
+buildozer android debug
+```
+
+Some additional tips for Android development:
+
+1. Add a proper app icon:
+
+```bash
+mkdir -p assets
+# Add your icon.png (96x96 pixels) to the assets directory
+```
+
+2. Create a loading screen:
+
+```bash
+# Create presplash.png (480x800 pixels) in your project directory
+```
+
+3. Add these to your .gitignore:
+
+```
+# Buildozer
+.buildozer/
+bin/
+```
+
+4. For debugging on Android:
+
+```bash
+buildozer android debug deploy run logcat
+```
+
+Common issues and solutions:
+
+1. Storage permissions:
+
+```python
+# Add to main.py if you need runtime permissions
+from android.permissions import request_permissions, Permission
+
+def check_permissions(self):
+    if platform == 'android':
+        request_permissions([
+            Permission.WRITE_EXTERNAL_STORAGE,
+            Permission.READ_EXTERNAL_STORAGE
+        ])
+```
+
+2. Screen size adaptation:
+
+```python
+# Add to your GameView class
+from kivy.core.window import Window
+
+def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    if platform == 'android':
+        self.size = Window.size
+        Window.bind(on_resize=self.on_window_resize)
+
+def on_window_resize(self, window, width, height):
+    """Handle window resize events."""
+    self.size = (width, height)
+    # Recalculate your game board size here
+```
+
+3. Back button handling:
+
+```python
+# Add to main.py
+from kivy.core.window import Window
+
+def build(self):
+    if platform == 'android':
+        Window.bind(on_keyboard=self.hook_keyboard)
+    return self.game_view
+
+def hook_keyboard(self, window, key, *args):
+    if key == 27:  # ESCAPE key or Android back button
+        return True  # Prevent app from closing
+```
+
+To test the app during development:
+
+1. Use an Android emulator (e.g., from Android Studio)
+2. Use a physical device with USB debugging enabled
+
+Remember to test thoroughly on different Android versions and screen sizes, as Android devices can vary significantly in their specifications.
